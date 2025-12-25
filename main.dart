@@ -9,7 +9,7 @@ class Response {
   String? message;
   dynamic data;
 
-  Response({required bool success, required String message, dynamic data});
+  Response({required this.success, required this.message, this.data});
 
   Map<String, dynamic> toMap() {
     return {"success": success, "message": message, "data": data};
@@ -32,52 +32,67 @@ class FileOrganzier {
     - Move Each File to its Corresponding Subdirectory
     - Return a Summary of the Organization Process (How Many Files Moved to Each Subdirectory)
   */
-  Response checkExistence(String name, path, {bool isFile = false}) {
-    // Check if the directory or File already exists
-    if (name.isEmpty || path.isEmpty) {
-      return Response(
-        success: false,
-        message: "Name or Path cannot be empty",
-        data: null,
-      );
-    }
-    var fullPath = Platform.isWindows ? "${path}\\${name}" : "$path/$name";
-    bool exists = isFile
-        ? File(fullPath).existsSync()
-        : Directory(fullPath).existsSync();
-    return Response(
-      success: exists,
-      message: exists ? "Exists" : "Not found",
-      data: fullPath,
-    );
-  }
-
-  // 2- Delete a File or Directory (name, path) -> True if Deleted Successfully, False and Reason if Deletion Fails
-  Response deleteFileOrDir(String name, path, {bool isFile = false}) {
-    var fullPath = Platform.isWindows ? "${path}\\${name}" : "$path/$name";
+  Response itemTypeByPath(String path) {
     try {
-      if (isFile) {
-        File file = File(fullPath);
-        if (!file.existsSync())
-          return Response(success: false, message: "This file is not found");
-        file.deleteSync();
-        return Response(
-          success: true,
-          message: "The file '$name' was deleted successfully",
-        );
-      } else {
-        Directory dir = Directory(fullPath);
-        if (!dir.existsSync())
-          return Response(success: false, message: "This file is not found");
-        dir.deleteSync();
-        return Response(
-          success: true,
-          message: "The file '$name' was deleted successfully",
-        );
+      final FileSystemEntityType type = FileSystemEntity.typeSync(path);
+      Response response = Response(success: true, message: "");
+      switch (type) {
+        case FileSystemEntityType.file:
+          response.data = "File";
+          break;
+        case FileSystemEntityType.directory:
+          response.data = "Directory";
+          break;
+        case FileSystemEntityType.notFound:
+          response.data = "Not Found";
+          break;
+        case FileSystemEntityType.link:
+          response.data = "Link";
+          break;
+        case FileSystemEntityType.pipe:
+          response.data = "PiPe";
+          break;
+        case FileSystemEntityType.unixDomainSock:
+          response.data = "UnixDomainSock";
+          break;
+        default:
+          response.data = "UnKnown";
+          break;
       }
+      return response;
     } catch (e) {
       return Response(success: false, message: e.toString());
     }
+  }
+
+  // 2- Delete a File or Directory (name, path) -> True if Deleted Successfully, False and Reason if Deletion Fails
+  Response deleteFileOrDir(String path) {
+    Response response = Response(success: true, message: "");
+    switch (itemTypeByPath(path).data) {
+      case "Not Found":
+        response.data = "$path is not Found";
+        break;
+      case "File":
+        File(path).deleteSync();
+        response.data = "$path is Deleted Succesfully";
+        break;
+      case "Directory":
+        Directory(path).deleteSync();
+        response.data = "$path is Deleted Succesfully";
+        break;
+      case "Link":
+        Link(path).deleteSync();
+        response.data = "The Link is Deleted Succesffully";
+        break;
+      case "PiPe":
+        response.data = "The Pipe Cannot be Deleted";
+        break;
+      case "UnixDomainSock":
+        response.data = "The UnixDomainSock Cannot be Deleted";
+        break;
+      default:
+    }
+    return response;
   }
 
   // 3- Rename a File or Directory (name, path, newName) -> New Path or False and Reason if Renaming Fails
@@ -105,90 +120,72 @@ class FileOrganzier {
   }
 
   // Create a New Directory or File and Return its Path (name, path, isFile : bool = False) -> New Path or False and Reason if Creation Fails
-  Response createFileOrDir(String name, path, {bool isFile = false}) {
-    String fullPath = Platform.isWindows ? "$path\\$name" : "$path/$name";
-
+  Response createFileOrDir(String path, {bool isFile = false, String? name}) {
+    String fullPath;
+    if (name == null) {
+      fullPath = path;
+    } else {
+      fullPath = Platform.isWindows ? "$path\\$name" : "$path/$name";
+    }
+    Response response = Response(success: true, message: "");
+    String type = itemTypeByPath(fullPath).data;
     try {
-      if (isFile == true) {
-        File file = File(fullPath);
-        if (!file.existsSync()) {
-          file.createSync();
-          return Response(success: true, message: fullPath);
+      if (type == "Not Found" && type != "UnKnown") {
+        if (isFile) {
+          File(fullPath).createSync();
+          response.message = "The $fullPath is created succesfully";
+          response.data = fullPath;
         } else {
-          return Response(success: false, message: "File is Already Exists");
-        }
-      } else {
-        Directory dir = Directory(fullPath);
-        if (!dir.existsSync()) {
-          dir.createSync();
-          return Response(success: true, message: fullPath);
-        } else {
-          return Response(success: false, message: "File is Already Exists");
+          Directory(path).createSync();
+          response.message = "The $type is created succesfully";
+          response.data = fullPath;
         }
       }
-    } on PathExistsException {
-      return Response(success: false, message: "Path is Already Exists");
-    } on PathAccessException {
-      return Response(success: false, message: "Access is denied in $path");
+      response.success = false;
+      response.data = "the $type is Already Exists ";
     } catch (e) {
-      return Response(success: false, message: e.toString());
+      response.success = false;
+      response.message = "The $type is created succesfully";
     }
+    return response;
   }
 
   // 5- Return List of the How Many Items in a Directory and a Dict of Their Names and Types (path = Current Working Directory) -> (Total Items Count, {itemName: itemType, ...})
   Response itemsInDir({String? path}) {
+    Directory dir;
     if (path == null) {
-      Directory dir = Directory.current;
-      List report = [dir.listSync().length];
-      List dirItems = [];
-      List items = dir.listSync();
-      for (int i = 0; i < items.length; i++) {
-        String itemType = items[i].toString().split(" ").first;
-        String itemPath = items[i].path;
-        String? itemExt;
-        if (dir.listSync()[i].toString().split(".").length > 1) {
-          itemExt = dir.listSync()[i].toString().split(".").last;
-        }
-        if (itemType == "File:") {
-          List fileAttrs = [itemType, itemPath, itemExt];
-
-          dirItems.add(fileAttrs);
-        } else {
-          List fileAttrs = [itemType, dir.listSync()[i].path];
-          dirItems.add(fileAttrs);
-        }
-      }
-      report.add(dirItems);
-      return Response(success: true, message: "", data: report);
+      dir = Directory.current;
     } else {
       try {
-        Directory dir = Directory(path);
+        dir = Directory(path);
         if (!dir.existsSync())
           return Response(success: false, message: "$path is not exists");
-        List dirItems = [];
-        List report = [dir.listSync().length];
-        for (int i = 0; i < dir.listSync().length; i++) {
-          String itemType = dir.listSync()[i].toString().split(" ").first;
-          if (itemType == "File:") {
-            List fileAttrs = [
-              itemType,
-              dir.listSync()[i].path,
-              dir.listSync()[i].toString().split(".").last,
-            ];
-            dirItems.add(fileAttrs);
-          } else {
-            List fileAttrs = [itemType, dir.listSync()[i].path];
-            dirItems.add(fileAttrs);
-          }
-        }
-        report.add(dirItems);
-        return Response(success: true, message: "", data: report);
-      } on FileSystemException {
-        return Response(success: false, message: "$path is not exists");
       } catch (e) {
         return Response(success: false, message: e.toString());
       }
     }
+    List items = dir.listSync();
+    List report = [items.length];
+    List<List> dirItems = [];
+    List<String?> fileAttrs = [];
+
+    for (var x in items) {
+      String itemPath = x.path;
+      String itemType = itemTypeByPath(itemPath).data;
+      String? itemExt;
+      if (x.toString().split(".").length > 1) {
+        itemExt = x.toString().split(".").last;
+      }
+      if (itemType == "File") {
+        fileAttrs = [itemType, itemPath, itemExt];
+      } else {
+        fileAttrs = [itemType, itemPath];
+      }
+      dirItems.add(fileAttrs);
+    }
+    report.add(dirItems);
+
+    return Response(success: true, message: "", data: report);
   }
 
   Future<Response> readfile(String path) async {
@@ -296,10 +293,27 @@ class FileOrganzier {
     }
   }
 
-  Response organizerDir({
-    String? path,
-    bool deleteEmptyDirs = false,
-  }) {
+  Response moveFiles(
+    String folderName,
+    Directory dir,
+    List<dynamic> files,
+    OrganizationSummary organizationSummary,
+  ) {
+    createFileOrDir(name: folderName, dir.path);
+    organizationSummary.addCreatedFolder(folderName);
+    for (var file in files) {
+      renameOrMove(
+        file[1],
+        Platform.isWindows
+            ? "${dir.path}\\$folderName\\${file[1].split("\\").last}"
+            : "${dir.path}/$folderName/${file[1].split("/").last}",
+      );
+      organizationSummary.addMovedFiles("$folderName", 1);
+    }
+    return Response(success: true, message: "File is Moved");
+  }
+
+  Response organizerDir({String? path, bool deleteEmptyDirs = false}) {
     Directory dir;
     List items = [];
     List files = [];
@@ -308,10 +322,11 @@ class FileOrganzier {
       return Response(success: false, message: "The Directory is Empty");
     }
     // Files Extensions
+
     List photoExt = ["jpg", "jpeg", "png", "ico", "gif", "tif", "bmp", 'svg'];
     List videoExt = ["flv", "wmv", "mkv", "mov", "avi", "mp4", "mpeg", "3gp"];
     List systemFilesExt = ["dll", "sys", "ini"];
-    List textFilesExt = ["txt", "pdf", "docx", "doc", "rtf"];
+    List textFilesExt = ["txt", "docx", "doc", "rtf"];
     List audioExt = ["mp3", "wav", "wma", "midi", "rm"];
     List execFilesExt = ["exe", "com", "bat"];
     List archiveFilesExt = ["zip", "rar", "7z", "tar", "iso"];
@@ -320,7 +335,9 @@ class FileOrganzier {
     List dataBaseFileExt = ["db", "sql"];
     List emailFilesExt = ["eml", "msg", "pst"];
 
+    List emptyDirs = [];
     // Files Lists
+
     List photos = [];
     List videos = [];
     List systemFiles = [];
@@ -347,7 +364,7 @@ class FileOrganzier {
     if (!dir.existsSync()) {
       return Response(success: false, message: "The Directory is not exists");
     } else {
-      if (isSingleTypeDir(dir) == true) {
+      if (isSingleTypeDir(dir).data == true) {
         return Response(
           success: false,
           message: "The Directory contains a single file type",
@@ -410,159 +427,79 @@ class FileOrganzier {
         continue;
       }
     } // End of files loop
-
+    String folderName;
     if (photos.isNotEmpty && photos.length > 1) {
-      createFileOrDir("Photos", dir.path);
-      organizationSummary.addCreatedFolder("Photos");
-      for (var photo in photos) {
-        renameOrMove(
-          photo[1],
-          "${dir.path}\\Photos\\${photo[1].split("\\").last}",
-        );
-        organizationSummary.addMovedFiles("Photos", 1);
-      }
+      folderName = "Photos";
+      moveFiles(folderName, dir, photos, organizationSummary);
     }
     if (videos.isNotEmpty && videos.length > 1) {
-      createFileOrDir("Videos", dir.path);
-      organizationSummary.addCreatedFolder("Videos");
-      for (var video in videos) {
-        renameOrMove(
-          video[1],
-          "${dir.path}\\Videos\\${video[1].split("\\").last}",
-        );
-        organizationSummary.addMovedFiles("Videos", 1);
-      }
+      folderName = "Videos";
+      moveFiles(folderName, dir, videos, organizationSummary);
     }
     if (systemFiles.isNotEmpty && systemFiles.length > 1) {
-      createFileOrDir("Documents", dir.path);
-      organizationSummary.addCreatedFolder("Documents");
-      for (var systemFile in systemFiles) {
-        renameOrMove(
-          systemFile[1],
-          "${dir.path}\\Documents\\${systemFile[1].split("\\").last}",
-        );
-        organizationSummary.addMovedFiles("Documents", 1);
-      }
+      folderName = "Documents";
+      moveFiles(folderName, dir, systemFiles, organizationSummary);
     }
     if (textFiles.isNotEmpty && textFiles.length > 1) {
-      createFileOrDir("Text Files", dir.path);
-      organizationSummary.addCreatedFolder("Text Files");
-      for (var textFile in textFiles) {
-        renameOrMove(
-          textFile[1],
-          "${dir.path}\\Text Files\\${textFile[1].split("\\").last}",
-        );
-        organizationSummary.addMovedFiles("Text Files", 1);
-      }
+      folderName = "Text Files";
+      moveFiles(folderName, dir, textFiles, organizationSummary);
     }
     if (audioFiles.isNotEmpty && audioFiles.length > 1) {
-      createFileOrDir("Audio Files", dir.path);
-      organizationSummary.addCreatedFolder("Audio Files");
-      for (var audioFile in audioFiles) {
-        renameOrMove(
-          audioFile[1],
-          "${dir.path}\\Audio Files\\${audioFile[1].split("\\").last}",
-        );
-        organizationSummary.addMovedFiles("Audio Files", 1);
-      }
+      folderName = "Audio Files";
+      moveFiles(folderName, dir, audioFiles, organizationSummary);
     }
     if (execFiles.isNotEmpty && execFiles.length > 1) {
-      createFileOrDir("Executable Files", dir.path);
-      organizationSummary.addCreatedFolder("Executable Files");
-      for (var execFile in execFiles) {
-        renameOrMove(
-          execFile[1],
-          "${dir.path}\\Executable Files\\${execFile[1].split("\\").last}",
-        );
-        organizationSummary.addMovedFiles("Executable Files", 1);
-      }
+      folderName = "Executable Files";
+      moveFiles(folderName, dir, execFiles, organizationSummary);
     }
     if (archiveFiles.isNotEmpty && archiveFiles.length > 1) {
-      createFileOrDir("Archive Files", dir.path);
-      organizationSummary.addCreatedFolder("Archive Files");
-      for (var archiveFile in archiveFiles) {
-        renameOrMove(
-          archiveFile[1],
-          "${dir.path}\\Archive Files\\${archiveFile[1].split("\\").last}",
-        );
-        organizationSummary.addMovedFiles("Archive Files", 1);
-      }
+      folderName = "Archive Files";
+      moveFiles(folderName, dir, archiveFiles, organizationSummary);
     }
     if (intnterFiles.isNotEmpty && intnterFiles.length > 1) {
-      createFileOrDir("Internet Files", dir.path);
-      organizationSummary.addCreatedFolder("Internet Files");
-      for (var internetFile in intnterFiles) {
-        renameOrMove(
-          internetFile[1],
-          "${dir.path}\\Internet Files\\${internetFile[1].split("\\").last}",
-        );
-        organizationSummary.addMovedFiles("Internet Files", 1);
-      }
+      folderName = "Internet Files";
+      moveFiles(folderName, dir, intnterFiles, organizationSummary);
     }
     if (presentationFiles.isNotEmpty && presentationFiles.length > 1) {
-      createFileOrDir("Presentation Files", dir.path);
-      organizationSummary.addCreatedFolder("Presentation Files");
-      for (var presentationFile in presentationFiles) {
-        renameOrMove(
-          presentationFile[1],
-          "${dir.path}\\Presentation Files\\${presentationFile[1].split("\\").last}",
-        );
-        organizationSummary.addMovedFiles("Presentation Files", 1);
-      }
+      folderName = "Presentation Files";
+      moveFiles(folderName, dir, presentationFiles, organizationSummary);
     }
     if (dataBaseFiles.isNotEmpty && dataBaseFiles.length > 1) {
-      createFileOrDir("Database Files", dir.path);
-      organizationSummary.addCreatedFolder("Database Files");
-      for (var databaseFile in dataBaseFiles) {
-        renameOrMove(
-          databaseFile[1],
-          "${dir.path}\\Database Files\\${databaseFile[1].split("\\").last}",
-        );
-        organizationSummary.addMovedFiles("Database Files", 1);
-      }
+      folderName = "Database Files";
+      moveFiles(folderName, dir, dataBaseFiles, organizationSummary);
     }
     if (emailFiles.isNotEmpty && emailFiles.length > 1) {
-      createFileOrDir("Email Files", dir.path);
-      organizationSummary.addCreatedFolder("Email Files");
-      for (var emailFile in emailFiles) {
-        renameOrMove(
-          emailFile[1],
-          "${dir.path}\\Email Files\\${emailFile[1].split("\\").last}",
-        );
-        organizationSummary.addMovedFiles("Email Files", 1);
-      }
+      folderName = "Email Files";
+      moveFiles(folderName, dir, emailFiles, organizationSummary);
     }
     if (pdfFiles.isNotEmpty && pdfFiles.length > 1) {
-      createFileOrDir("PDF Files", dir.path);
-      organizationSummary.addCreatedFolder("PDF Files");
-      for (var pdfFile in pdfFiles) {
-        renameOrMove(
-          pdfFile[1],
-          "${dir.path}\\PDF Files\\${pdfFile[1].split("\\").last}",
-        );
-        organizationSummary.addMovedFiles("PDF Files", 1);
-      }
+      folderName = "PDF Files";
+      moveFiles(folderName, dir, pdfFiles, organizationSummary);
     }
     if (others.isNotEmpty && others.length > 1) {
       for (var other in others) {
         var otherExt = other[2];
-        createFileOrDir("$otherExt Files", dir.path);
-        organizationSummary.addCreatedFolder("$otherExt Files");
+        folderName = "$otherExt Files";
+        createFileOrDir(name: folderName, dir.path);
+        organizationSummary.addCreatedFolder(folderName);
         renameOrMove(
           other[1],
-          "${dir.path}\\$otherExt Files\\${other[1].split("\\").last}",
+          "${dir.path}\\$folderName\\${other[1].split("\\").last}",
         );
-        organizationSummary.addMovedFiles("$otherExt Files", 1);
+        organizationSummary.addMovedFiles(folderName, 1);
       }
     }
 
     for (var directory in directories) {
       if (deleteEmptyDirs == true &&
           Directory(directory[1]).listSync().isEmpty) {
-        deleteFileOrDir(directory[1].split("\\").last, dir.path, isFile: false);
+        emptyDirs.add(directory[1]);
         continue;
       }
       organizerDir(path: directory[1]);
+    }
+    for (var emptyDir in emptyDirs) {
+      deleteFileOrDir(emptyDir[1]);
     }
     organizationSummary.end();
     return Response(success: true, message: "", data: organizationSummary);
@@ -573,5 +510,5 @@ void main() async {
   FileOrganzier fileOrganzier = FileOrganzier();
 
   // Example Usage:
-  
+  fileOrganzier.itemsInDir();
 }

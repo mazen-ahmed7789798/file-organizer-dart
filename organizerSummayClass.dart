@@ -1,5 +1,3 @@
-import 'dart:io';
-
 class OrganizationSummary {
   Map<String, int> movedFileCounts = {};
   List<String> createdFolders = [];
@@ -72,4 +70,21 @@ class OrganizationSummary {
       print('');
     }
   }
+
+
+  Map<String, dynamic> getSummary() {
+    return {
+      "totalFilesMoved": totalFilesMoved,
+      "elapsedSeconds": elapsedSeconds(),
+      "movedFileCounts": movedFileCounts,
+      "createdFolders": createdFolders,
+      "errors": errors,
+    };
+  }
+
+}
+
+void main() {
+  OrganizationSummary organizationSummary = OrganizationSummary();
+  organizationSummary.printSummary();
 }
