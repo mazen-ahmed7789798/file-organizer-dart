@@ -1,8 +1,7 @@
 // This Module for File Organization
 import 'dart:io';
 import 'organizerSummayClass.dart';
-
-OrganizationSummary organizationSummary = OrganizationSummary();
+import 'package:path/path.dart' as p;
 
 class Response {
   bool? success;
@@ -32,6 +31,7 @@ class FileOrganzier {
     - Move Each File to its Corresponding Subdirectory
     - Return a Summary of the Organization Process (How Many Files Moved to Each Subdirectory)
   */
+  OrganizationSummary _organizationSummary = OrganizationSummary();
   Response itemTypeByPath(String path) {
     try {
       final FileSystemEntityType type = FileSystemEntity.typeSync(path);
@@ -65,6 +65,21 @@ class FileOrganzier {
     }
   }
 
+  Response dirIsEmpty(String path) {
+    Response response = Response(success: true, message: "");
+    if (itemTypeByPath(path).data != "Directory") {
+      response.success = false;
+      response.message = "The Directory $path is not exists";
+      return response;
+    }
+    if (itemsInDir(path: path).data[0] == 0) {
+      response.data = true;
+    } else {
+      response.data = false;
+    }
+    return response;
+  }
+
   // 2- Delete a File or Directory (name, path) -> True if Deleted Successfully, False and Reason if Deletion Fails
   Response deleteFileOrDir(String path) {
     Response response = Response(success: true, message: "");
@@ -77,7 +92,11 @@ class FileOrganzier {
         response.data = "$path is Deleted Succesfully";
         break;
       case "Directory":
-        Directory(path).deleteSync();
+        if (dirIsEmpty(path).data == false) {
+          Directory(path).deleteSync(recursive: true);
+        } else {
+          Directory(path).deleteSync();
+        }
         response.data = "$path is Deleted Succesfully";
         break;
       case "Link":
@@ -85,7 +104,7 @@ class FileOrganzier {
         response.data = "The Link is Deleted Succesffully";
         break;
       case "PiPe":
-        response.data = "The Pipe Cannot be Deleted";
+        response.data = "The PiPe Cannot be Deleted";
         break;
       case "UnixDomainSock":
         response.data = "The UnixDomainSock Cannot be Deleted";
@@ -125,24 +144,25 @@ class FileOrganzier {
     if (name == null) {
       fullPath = path;
     } else {
-      fullPath = Platform.isWindows ? "$path\\$name" : "$path/$name";
+      fullPath = p.join(path, name);
     }
     Response response = Response(success: true, message: "");
     String type = itemTypeByPath(fullPath).data;
     try {
-      if (type == "Not Found" && type != "UnKnown") {
+      if (type == "Not Found") {
         if (isFile) {
           File(fullPath).createSync();
           response.message = "The $fullPath is created succesfully";
           response.data = fullPath;
         } else {
-          Directory(path).createSync();
+          Directory(fullPath).createSync();
           response.message = "The $type is created succesfully";
           response.data = fullPath;
         }
+      } else {
+        response.success = false;
+        response.data = "the $type is Already Exists ";
       }
-      response.success = false;
-      response.data = "the $type is Already Exists ";
     } catch (e) {
       response.success = false;
       response.message = "The $type is created succesfully";
@@ -151,7 +171,7 @@ class FileOrganzier {
   }
 
   // 5- Return List of the How Many Items in a Directory and a Dict of Their Names and Types (path = Current Working Directory) -> (Total Items Count, {itemName: itemType, ...})
-  Response itemsInDir({String? path}) {
+  Response itemsInDir({String? path, bool recursive = false}) {
     Directory dir;
     if (path == null) {
       dir = Directory.current;
@@ -164,43 +184,53 @@ class FileOrganzier {
         return Response(success: false, message: e.toString());
       }
     }
+    var children;
     List items = dir.listSync();
+    List files = [];
+    List directoies = [];
     List report = [items.length];
     List<List> dirItems = [];
-    List<String?> fileAttrs = [];
+    Map fileAttrs = {};
 
     for (var x in items) {
       String itemPath = x.path;
       String itemType = itemTypeByPath(itemPath).data;
       String? itemExt;
-      if (x.toString().split(".").length > 1) {
-        itemExt = x.toString().split(".").last;
+      if (p.extension(x.path).isNotEmpty) {
+        itemExt = p.extension(x.path).replaceFirst(".", "");
       }
       if (itemType == "File") {
-        fileAttrs = [itemType, itemPath, itemExt];
+        fileAttrs = {"type": itemType, "path": itemPath, "extention": itemExt};
+        files.add(fileAttrs);
       } else {
-        fileAttrs = [itemType, itemPath];
+        children = recursive ? itemsInDir(path: itemPath).data[1] : [];
+        fileAttrs = {"type": itemType, "path": itemPath, "children": children};
+        directoies.add(fileAttrs);
       }
-      dirItems.add(fileAttrs);
-    }
+    } // End for loop
+    dirItems.add(files);
+    dirItems.add(directoies);
     report.add(dirItems);
-
     return Response(success: true, message: "", data: report);
   }
 
   Future<Response> readfile(String path) async {
     var config = File('$path');
     try {
+      if (itemTypeByPath(path).data != "File") {
+        return Response(success: false, message: "$path is not a File");
+      } else if (!config.existsSync() ||
+          itemTypeByPath(path).data == "Not Found") {
+        return Response(success: false, message: "$path is not exists");
+      }
       var contents = await config.readAsString();
       int chars = contents.length;
       int lines = contents.split("\n").length;
       return Response(
         success: true,
-        message: "",
-        data: {"File-Content": contents, "Charactars": chars, "Lines": lines},
+        message: "Thanks God",
+        data: {"content": contents, "charactars": chars, "lines": lines},
       );
-    } on FileSystemException {
-      return Response(success: false, message: "$path is not found");
     } catch (e) {
       return Response(success: false, message: e.toString());
     }
@@ -234,10 +264,10 @@ class FileOrganzier {
     }
   }
 
-  Future<Response> copyFile(String nowPath, newPath) async {
+  Future<Response> copyFile(String nowPath, String newPath) async {
     try {
       File file = File(nowPath);
-      await file.copySync(newPath);
+      file.copySync(newPath);
       return Response(
         success: true,
         message: "${nowPath.split(r"\").last} is copied to ${newPath}",
@@ -255,7 +285,7 @@ class FileOrganzier {
 
     for (var item in allItems) {
       String itemType = item[0];
-      if (itemType == "File:") {
+      if (itemType == "File") {
         files.add(item);
       } else {
         directories.add(item);
@@ -264,56 +294,59 @@ class FileOrganzier {
     return Response(success: true, message: "", data: [files, directories]);
   }
 
+  // This Method Return the types of directory
   Response typesInDir(Directory dir) {
     List files = scanDir(dir).data[0];
     List types = [];
     for (var file in files) {
       String? itemExt;
       if (file.length > 2 && file[2] != null) {
-        itemExt = (file[2] as String).replaceAll("'", "").trim();
+        itemExt = file[2];
         types.add(itemExt);
       }
     }
-    return Response(success: true, message: "", data: types);
+    return Response(success: true, message: "Thanks God", data: types);
   }
 
-  // هذه الدالة تخبرنا اذا كان هذا المجلد يحتوي علي ملفات من نوع واحد ام لا
+  // This method tell us if the directory has the same kind of files
   Response isSingleTypeDir(Directory dir) {
     List types = typesInDir(dir).data;
     if (types.isNotEmpty) {
-      var firstType = types[0];
+      var firstType = types.first;
       for (var type in types) {
         if (type != firstType) {
-          return Response(success: true, message: "", data: false);
+          return Response(success: true, message: "Thanks God", data: false);
         }
       }
-      return Response(success: true, message: "", data: true);
+      return Response(success: true, message: "Thanks God", data: true);
     } else {
-      return Response(success: true, message: "", data: false);
+      return Response(success: true, message: "Thanks God", data: false);
     }
   }
 
-  Response moveFiles(
+  // Move Multiple Files to One Directory
+  Future<Response> moveFiles(
     String folderName,
     Directory dir,
     List<dynamic> files,
     OrganizationSummary organizationSummary,
-  ) {
-    createFileOrDir(name: folderName, dir.path);
+  ) async {
+    Response res = createFileOrDir(dir.path, name: folderName);
+    if (res.success == false) {
+      return Response(success: false, message: res.message);
+    }
     organizationSummary.addCreatedFolder(folderName);
     for (var file in files) {
-      renameOrMove(
-        file[1],
-        Platform.isWindows
-            ? "${dir.path}\\$folderName\\${file[1].split("\\").last}"
-            : "${dir.path}/$folderName/${file[1].split("/").last}",
-      );
+      file[1] = (file[1] as String).replaceAll(r"\", r"\\");
+      await renameOrMove(
+          file[1] as String, p.join(dir.path, folderName, p.basename(file[1])));
       organizationSummary.addMovedFiles("$folderName", 1);
     }
     return Response(success: true, message: "File is Moved");
   }
 
-  Response organizerDir({String? path, bool deleteEmptyDirs = false}) {
+  Future<Response> organizerDir(
+      {String? path, bool deleteEmptyDirs = false}) async {
     Directory dir;
     List items = [];
     List files = [];
@@ -371,14 +404,14 @@ class FileOrganzier {
         );
       }
     }
-    organizationSummary.start();
+    _organizationSummary.start();
     items = scanDir(dir).data;
     files = items[0];
     directories = items[1];
     for (List item in files) {
       String? itemExt;
       if (item.length > 2 && item[2] != null) {
-        itemExt = (item[2] as String).replaceAll("'", "").trim();
+        itemExt = item[2];
       }
 
       if (itemExt == null) continue;
@@ -430,63 +463,64 @@ class FileOrganzier {
     String folderName;
     if (photos.isNotEmpty && photos.length > 1) {
       folderName = "Photos";
-      moveFiles(folderName, dir, photos, organizationSummary);
+      await moveFiles(folderName, dir, photos, _organizationSummary);
     }
     if (videos.isNotEmpty && videos.length > 1) {
       folderName = "Videos";
-      moveFiles(folderName, dir, videos, organizationSummary);
+      await moveFiles(folderName, dir, videos, _organizationSummary);
     }
     if (systemFiles.isNotEmpty && systemFiles.length > 1) {
       folderName = "Documents";
-      moveFiles(folderName, dir, systemFiles, organizationSummary);
+      await moveFiles(folderName, dir, systemFiles, _organizationSummary);
     }
     if (textFiles.isNotEmpty && textFiles.length > 1) {
       folderName = "Text Files";
-      moveFiles(folderName, dir, textFiles, organizationSummary);
+      await moveFiles(folderName, dir, textFiles, _organizationSummary);
     }
     if (audioFiles.isNotEmpty && audioFiles.length > 1) {
       folderName = "Audio Files";
-      moveFiles(folderName, dir, audioFiles, organizationSummary);
+      await moveFiles(folderName, dir, audioFiles, _organizationSummary);
     }
     if (execFiles.isNotEmpty && execFiles.length > 1) {
       folderName = "Executable Files";
-      moveFiles(folderName, dir, execFiles, organizationSummary);
+      await moveFiles(folderName, dir, execFiles, _organizationSummary);
     }
     if (archiveFiles.isNotEmpty && archiveFiles.length > 1) {
       folderName = "Archive Files";
-      moveFiles(folderName, dir, archiveFiles, organizationSummary);
+      await moveFiles(folderName, dir, archiveFiles, _organizationSummary);
     }
     if (intnterFiles.isNotEmpty && intnterFiles.length > 1) {
       folderName = "Internet Files";
-      moveFiles(folderName, dir, intnterFiles, organizationSummary);
+      await moveFiles(folderName, dir, intnterFiles, _organizationSummary);
     }
     if (presentationFiles.isNotEmpty && presentationFiles.length > 1) {
       folderName = "Presentation Files";
-      moveFiles(folderName, dir, presentationFiles, organizationSummary);
+      await moveFiles(folderName, dir, presentationFiles, _organizationSummary);
     }
     if (dataBaseFiles.isNotEmpty && dataBaseFiles.length > 1) {
       folderName = "Database Files";
-      moveFiles(folderName, dir, dataBaseFiles, organizationSummary);
+      await moveFiles(folderName, dir, dataBaseFiles, _organizationSummary);
     }
     if (emailFiles.isNotEmpty && emailFiles.length > 1) {
       folderName = "Email Files";
-      moveFiles(folderName, dir, emailFiles, organizationSummary);
+      await moveFiles(folderName, dir, emailFiles, _organizationSummary);
     }
     if (pdfFiles.isNotEmpty && pdfFiles.length > 1) {
       folderName = "PDF Files";
-      moveFiles(folderName, dir, pdfFiles, organizationSummary);
+      await moveFiles(folderName, dir, pdfFiles, _organizationSummary);
     }
     if (others.isNotEmpty && others.length > 1) {
       for (var other in others) {
         var otherExt = other[2];
         folderName = "$otherExt Files";
-        createFileOrDir(name: folderName, dir.path);
-        organizationSummary.addCreatedFolder(folderName);
-        renameOrMove(
+        createFileOrDir(dir.path, name: folderName);
+        _organizationSummary.addCreatedFolder(folderName);
+        other[1] = (other[1] as String).replaceAll(r"\", r"\\");
+        await renameOrMove(
           other[1],
-          "${dir.path}\\$folderName\\${other[1].split("\\").last}",
+          p.join(dir.path, folderName, p.basename(other[1])),
         );
-        organizationSummary.addMovedFiles(folderName, 1);
+        _organizationSummary.addMovedFiles(folderName, 1);
       }
     }
 
@@ -496,19 +530,14 @@ class FileOrganzier {
         emptyDirs.add(directory[1]);
         continue;
       }
-      organizerDir(path: directory[1]);
+      await organizerDir(path: directory[1]);
     }
     for (var emptyDir in emptyDirs) {
       deleteFileOrDir(emptyDir[1]);
     }
-    organizationSummary.end();
-    return Response(success: true, message: "", data: organizationSummary);
+    _organizationSummary.end();
+    return Response(success: true, message: "", data: _organizationSummary);
   }
 }
 
-void main() async {
-  FileOrganzier fileOrganzier = FileOrganzier();
-
-  // Example Usage:
-  fileOrganzier.itemsInDir();
-}
+void main() async {}
